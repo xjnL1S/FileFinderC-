@@ -5,17 +5,26 @@
 #include <cstdio>
 #include <string>
 #include "TreeHolder.cpp"
+#include <shared_mutex>
 using namespace std;
 
 static int MAX_THREADS = 10;
 static int RUNNING_PARALLEL_THREADS = 0;
 bool isFounded = false;
 
+shared_mutex sharedMutexRunningThreads;
+shared_mutex sharedMutexIsFounded;
+
 void findFilesAndCatalogs(const std::string &basePath, std::vector<std::string> &files, std::vector<std::string> &catalogs);
 void buildTreeRecursive(TreeHolder &tree);
 void searchFileInTreeRecursive(TreeHolder &tree, string&searchedFileName);
 void startThreadSearching(TreeHolder& tree, string &searchedFileName);
-
+void increment();
+void decrement();
+boolean isAllowedNewThread();
+boolean isParallelSearchRunning();
+boolean isFoundedFile();
+void setFounded();
 
 int main(int argc, char* argv[]) {
 
@@ -59,11 +68,11 @@ int main(int argc, char* argv[]) {
 
     searchFileInTreeRecursive(startTree, searchedFile);
 
-    while (RUNNING_PARALLEL_THREADS > 0) {
+    while (isParallelSearchRunning()) {
         this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    if (!isFounded) {
+    if (!isFoundedFile()) {
         std::cout << "Can't find this file: " + searchedFile << std::endl;
     }
 
@@ -111,22 +120,22 @@ void buildTreeRecursive(TreeHolder &tree) {
 
 //функция по рекурсивному поиску файлов
 void searchFileInTreeRecursive(TreeHolder &tree, string &searchedFileName) {
-    if (isFounded) {
+    if (isFoundedFile()) {
         return;
     }
     for (string file : tree.getContainedFiles()) {
         if (file == searchedFileName) {
            std::cout << "Founded file in path: " + tree.getPath() + "/" + searchedFileName << std::endl;
-           isFounded = true;
+           setFounded();
            return;
         }
     }
 
     // Для каждого дочернего узла подключаем при поиске (в случае наличия свободных) новый фоновый поток
     for (TreeHolder childTree : tree.getChildsTreeHolders()) {
-        if (!isFounded) {
-            if (RUNNING_PARALLEL_THREADS < MAX_THREADS) {
-                thread thread(startThreadSearching, ref(tree), ref(searchedFileName));
+        if (!isFoundedFile()) {
+            if (isAllowedNewThread()) {
+                thread thread(startThreadSearching, ref(childTree), ref(searchedFileName));
                 thread.detach();
                 
                 //ждем старта параллельного потока (чтобы в основном потоке счетчик работающих параллельных потоков не стал 0 раньше, чем закончится работа параллельных потоков).
@@ -141,10 +150,37 @@ void searchFileInTreeRecursive(TreeHolder &tree, string &searchedFileName) {
 
 //функция по старту потока (инкремент, декремент счетчика потоков)
 void startThreadSearching(TreeHolder &tree, string &searchedFileName) {
-    RUNNING_PARALLEL_THREADS++;
+    increment();
     searchFileInTreeRecursive(tree, searchedFileName);
+    decrement();
+}
+
+void increment() {
+    unique_lock<std::shared_mutex> uniqueLock(sharedMutexRunningThreads);
+    RUNNING_PARALLEL_THREADS++;
+}
+
+void decrement() {
+    unique_lock<std::shared_mutex> uniqueLock(sharedMutexRunningThreads);
     RUNNING_PARALLEL_THREADS--;
 }
 
+boolean isAllowedNewThread() {
+    shared_lock<std::shared_mutex> sharedLock(sharedMutexRunningThreads);
+    return RUNNING_PARALLEL_THREADS < MAX_THREADS;
+}
 
+boolean isParallelSearchRunning() {
+    shared_lock<std::shared_mutex> sharedLock(sharedMutexRunningThreads);
+    return RUNNING_PARALLEL_THREADS > 0;
+}
 
+boolean isFoundedFile() {
+    shared_lock<std::shared_mutex> sharedLock(sharedMutexIsFounded);
+    return isFounded;
+}
+
+void setFounded() {
+    unique_lock<std::shared_mutex> uniqueLock(sharedMutexIsFounded);
+    isFounded = true;
+}
