@@ -19,7 +19,6 @@ void findFilesAndCatalogs(const std::string &basePath, std::vector<std::string> 
 void buildTreeRecursive(TreeHolder &tree);
 void searchFileInTreeRecursive(TreeHolder &tree, string&searchedFileName);
 void startThreadSearching(TreeHolder& tree, string &searchedFileName);
-void increment();
 void decrement();
 boolean isAllowedNewThread();
 boolean isParallelSearchRunning();
@@ -150,14 +149,8 @@ void searchFileInTreeRecursive(TreeHolder &tree, string &searchedFileName) {
 
 //функция по старту потока (инкремент, декремент счетчика потоков)
 void startThreadSearching(TreeHolder &tree, string &searchedFileName) {
-    increment();
     searchFileInTreeRecursive(tree, searchedFileName);
     decrement();
-}
-
-void increment() {
-    unique_lock<std::shared_mutex> uniqueLock(sharedMutexRunningThreads);
-    RUNNING_PARALLEL_THREADS++;
 }
 
 void decrement() {
@@ -166,8 +159,12 @@ void decrement() {
 }
 
 boolean isAllowedNewThread() {
-    shared_lock<std::shared_mutex> sharedLock(sharedMutexRunningThreads);
-    return RUNNING_PARALLEL_THREADS < MAX_THREADS;
+    unique_lock<std::shared_mutex> uniqueLock(sharedMutexRunningThreads);
+    if (RUNNING_PARALLEL_THREADS < MAX_THREADS) {
+        RUNNING_PARALLEL_THREADS++;
+        return true;
+    }
+    return false;
 }
 
 boolean isParallelSearchRunning() {
